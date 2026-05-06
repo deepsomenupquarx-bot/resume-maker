@@ -19,36 +19,57 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-const LINKEDIN_CLIENT_ID = process.env.LINKEDIN_CLIENT_ID || '';
-const LINKEDIN_CLIENT_SECRET = process.env.LINKEDIN_CLIENT_SECRET || '';
-// Redirect back to the frontend domain. On Vercel, this is usually passed via env or detected.
-// For now, I'll use an environment variable for the production URL.
-const PRODUCTION_URL = process.env.PRODUCTION_URL || 'http://localhost:3000';
-const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || `${PRODUCTION_URL}/api/linkedin/callback`;
+const PRODUCTION_URL = process.env.PRODUCTION_URL || 'https://resume-maker-mu-coral.vercel.app';
+const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || `${PRODUCTION_URL}/auth/linkedin/callback`;
+
+console.log('API Initialized with PRODUCTION_URL:', PRODUCTION_URL);
+console.log('LinkedIn Redirect URI:', LINKEDIN_REDIRECT_URI);
 
 // ─── LinkedIn OAuth ────────────────────────────────────────────────────────────
 
 app.get('/api/linkedin/auth-url', (req, res) => {
-  const scope = 'openid profile email';
-  const state = crypto.randomBytes(16).toString('hex');
-  const url = `https://www.linkedin.com/oauth/v2/authorization?` +
-    `response_type=code` +
-    `&client_id=${LINKEDIN_CLIENT_ID}` +
-    `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
-    `&scope=${encodeURIComponent(scope)}` +
-    `&state=${state}`;
-  res.json({ url, state });
+  try {
+    console.log('Generating LinkedIn Auth URL...');
+    const scope = 'openid profile email';
+    const state = crypto.randomBytes(16).toString('hex');
+    
+    if (!process.env.LINKEDIN_CLIENT_ID) {
+      console.error('LINKEDIN_CLIENT_ID is missing');
+      return res.status(500).json({ error: 'LinkedIn Client ID is not configured on the server' });
+    }
+
+    const url = `https://www.linkedin.com/oauth/v2/authorization?` +
+      `response_type=code` +
+      `&client_id=${process.env.LINKEDIN_CLIENT_ID}` +
+      `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(scope)}` +
+      `&state=${state}`;
+    
+    console.log('Auth URL generated successfully');
+    res.json({ url, state });
+  } catch (error) {
+    console.error('Error in /api/linkedin/auth-url:', error);
+    res.status(500).json({ error: 'Internal Server Error', message: error.message });
+  }
 });
 
-app.get('/api/linkedin/callback', async (req, res) => {
+app.get('/auth/linkedin/callback', async (req, res) => {
   const { code, error, error_description } = req.query;
 
+  console.log('Received LinkedIn callback with code:', code ? 'present' : 'absent');
+
   if (error) {
+    console.error('LinkedIn Auth Error:', error, error_description);
     const msg = encodeURIComponent(error_description || error);
     return res.redirect(`${PRODUCTION_URL}?linkedin_error=${msg}`);
   }
 
+  if (!code) {
+    return res.redirect(`${PRODUCTION_URL}?linkedin_error=no_code_provided`);
+  }
+
   try {
+    console.log('Exchanging code for access token...');
     const tokenRes = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -56,20 +77,25 @@ app.get('/api/linkedin/callback', async (req, res) => {
         grant_type: 'authorization_code',
         code: code,
         redirect_uri: LINKEDIN_REDIRECT_URI,
-        client_id: LINKEDIN_CLIENT_ID,
-        client_secret: LINKEDIN_CLIENT_SECRET,
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
       }),
     });
+    
     const tokenData = await tokenRes.json();
+    console.log('Token response received:', tokenData.access_token ? 'success' : 'failed');
 
     if (!tokenData.access_token) {
+      console.error('Failed to get access token:', tokenData);
       return res.redirect(`${PRODUCTION_URL}?linkedin_error=token_failed`);
     }
 
+    console.log('Fetching user profile...');
     const profileRes = await fetch('https://api.linkedin.com/v2/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     const profile = await profileRes.json();
+    console.log('Profile fetched for:', profile.name);
 
     const resumeData = {
       fullName: `${profile.given_name || ''} ${profile.family_name || ''}`.trim(),
@@ -82,7 +108,7 @@ app.get('/api/linkedin/callback', async (req, res) => {
     const encoded = encodeURIComponent(JSON.stringify(resumeData));
     res.redirect(`${PRODUCTION_URL}?linkedin_data=${encoded}`);
   } catch (err) {
-    console.error('LinkedIn callback error:', err);
+    console.error('LinkedIn callback server error:', err);
     res.redirect(`${PRODUCTION_URL}?linkedin_error=server_error`);
   }
 });
