@@ -11,6 +11,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Bord
 import { saveAs } from 'file-saver';
 import * as Templates from './components/templates/AllTemplates';
 import { QRCodeSVG } from 'qrcode.react';
+import LinkedInImport, { LinkedInProfileData } from './components/LinkedInImport';
 
 const DUMMY_DATA: ResumeData = {
   personalInfo: {
@@ -71,7 +72,7 @@ const INITIAL_DATA: ResumeData = {
 };
 
 export default function App() {
-  const [view, setView] = useState<'landing' | 'templates' | 'builder' | 'success' | 'ai-import' | 'payment' | 'preview'>('landing');
+  const [view, setView] = useState<'landing' | 'templates' | 'builder' | 'success' | 'ai-import' | 'linkedin-import' | 'payment' | 'preview'>('landing');
   const [currentStep, setCurrentStep] = useState('info');
   const [data, setData] = useState<ResumeData>(INITIAL_DATA);
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -85,6 +86,43 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [linkedinError, setLinkedinError] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linkedinData = params.get('linkedin_data');
+    const error = params.get('linkedin_error');
+
+    if (linkedinData) {
+      try {
+        const profile = JSON.parse(decodeURIComponent(linkedinData));
+        handleLinkedInData(profile);
+        // Clear params without refresh
+        window.history.replaceState({}, document.title, "/");
+      } catch (e) {
+        console.error("Failed to parse LinkedIn data", e);
+      }
+    } else if (error) {
+      setLinkedinError(decodeURIComponent(error));
+      setView('linkedin-import');
+      window.history.replaceState({}, document.title, "/");
+    }
+  }, []);
+
+  const handleLinkedInData = (profile: LinkedInProfileData) => {
+    setData(prev => ({
+      ...prev,
+      personalInfo: {
+        ...prev.personalInfo,
+        fullName: profile.fullName || prev.personalInfo.fullName,
+        email: profile.email || prev.personalInfo.email,
+        summary: profile.headline || prev.personalInfo.summary,
+        location: profile.location || prev.personalInfo.location,
+      }
+    }));
+    setView('builder');
+    setCurrentStep('info');
+  };
 
   const handleDownloadPDF = async () => {
     if (!isPaid) {
@@ -133,7 +171,7 @@ export default function App() {
         </html>
       `;
 
-      const response = await fetch('http://localhost:3001/generate-pdf', {
+      const response = await fetch('/api/generate-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ html: fullHtml })
@@ -343,7 +381,7 @@ export default function App() {
   const handlePayment = async () => {
     setPaymentLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/create-order', {
+      const response = await fetch('/api/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -358,7 +396,7 @@ export default function App() {
         image: "https://your-logo-url.com/logo.png",
         order_id: order.id,
         handler: async function (response: any) {
-          const verifyRes = await fetch('http://localhost:3001/verify-payment', {
+          const verifyRes = await fetch('/api/verify-payment', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -596,8 +634,7 @@ export default function App() {
                  if (pendingMode === 'ai') {
                    setView('ai-import');
                  } else if (pendingMode === 'linkedin') {
-                   alert('LinkedIn integration requires API setup. Starting in manual mode.');
-                   setView('builder');
+                   setView('linkedin-import');
                  } else {
                    setView('builder');
                  }
@@ -861,6 +898,16 @@ export default function App() {
           <ResumePreview data={data} selectedTemplate={selectedTemplate} />
         </div>
       </div>
+    );
+  }
+
+  if (view === 'linkedin-import') {
+    return (
+      <LinkedInImport 
+        onBack={() => setView('landing')} 
+        onDataFetched={handleLinkedInData}
+        errorMessage={linkedinError}
+      />
     );
   }
 
