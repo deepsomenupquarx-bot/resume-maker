@@ -83,9 +83,11 @@ export default function App() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isPaid, setIsPaid] = useState(false);
+  const [paymentLoading, setPaymentLoading] = useState(false);
 
   const handleDownloadPDF = async () => {
-    if (localStorage.getItem("paid") !== "true") {
+    if (!isPaid) {
       setView('payment');
       return;
     }
@@ -155,7 +157,7 @@ export default function App() {
   };
 
   const handleDownloadDOCX = async () => {
-    if (localStorage.getItem("paid") !== "true") {
+    if (!isPaid) {
       setView('payment');
       return;
     }
@@ -338,13 +340,62 @@ export default function App() {
     setView('templates');
   };
 
-  const handlePayment = () => {
-    setIsPaying(true);
-    // Simulate payment processing
-    setTimeout(() => {
-      setIsPaying(false);
-      setView('success');
-    }, 2500);
+  const handlePayment = async () => {
+    setPaymentLoading(true);
+    try {
+      const response = await fetch('http://localhost:3001/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const order = await response.json();
+
+      const options = {
+        key: import.meta.env.VITE_RAZORPAY_KEY_ID || '', // Frontend key
+        amount: order.amount,
+        currency: order.currency,
+        name: "Premium Resume Builder",
+        description: "Unlock Premium Resume Downloads",
+        image: "https://your-logo-url.com/logo.png",
+        order_id: order.id,
+        handler: async function (response: any) {
+          const verifyRes = await fetch('http://localhost:3001/verify-payment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            })
+          });
+          const verifyData = await verifyRes.json();
+          if (verifyData.success) {
+            setIsPaid(true);
+            setView('success');
+          } else {
+            alert("Payment verification failed. Please try again.");
+          }
+        },
+        prefill: {
+          name: data.personalInfo.fullName,
+          email: data.personalInfo.email,
+          contact: data.personalInfo.phone,
+        },
+        theme: {
+          color: "#3525cd",
+        },
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on('payment.failed', function (response: any) {
+        alert("Payment failed: " + response.error.description);
+      });
+      rzp.open();
+    } catch (error) {
+      console.error("Payment error:", error);
+      alert("Failed to initiate payment. Check your internet connection.");
+    } finally {
+      setPaymentLoading(false);
+    }
   };
 
   const handleSelectTemplate = (id: string) => {
@@ -647,53 +698,90 @@ export default function App() {
   }
 
   if (view === 'payment') {
-    const upiLink = "upi://pay?pa=yourupi@upi&pn=ResumeBuilder&am=5&cu=INR";
     return (
-      <div className="min-h-screen bg-surface flex flex-col items-center justify-center p-6 text-center">
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
         <motion.div 
-          initial={{ scale: 0.9, opacity: 0 }}
+          initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="max-w-md w-full bg-white p-12 rounded-[40px] shadow-paper border border-slate-100"
+          className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-2 bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100"
         >
-          <div className="w-20 h-20 bg-indigo-50 text-primary rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-inner">
-            <Lock className="w-10 h-10" />
-          </div>
-          <h1 className="text-3xl font-extrabold text-slate-900 mb-2">Unlock Resume Download</h1>
-          <p className="text-secondary mb-10 text-sm leading-relaxed">Scan QR and pay ₹5 to unlock download</p>
-          
-          <div className="flex justify-center mb-8 bg-slate-50 p-6 rounded-3xl border border-slate-100">
-             <QRCodeSVG value={upiLink} size={200} />
-          </div>
-          
-          <div className="text-center mb-8">
-            <p className="text-sm text-slate-500">UPI ID</p>
-            <p className="font-bold text-slate-900">yourupi@upi</p>
-            <p className="text-xl font-black text-slate-900 mt-2">₹5</p>
+          {/* Left Side: Preview */}
+          <div className="bg-slate-900 p-12 text-white flex flex-col justify-between relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 blur-[100px] rounded-full"></div>
+            <div>
+              <div className="w-12 h-12 bg-white/10 backdrop-blur-xl rounded-2xl flex items-center justify-center mb-8 border border-white/10">
+                <Sparkles className="w-6 h-6 text-primary-container" />
+              </div>
+              <h2 className="text-3xl font-black tracking-tight mb-4 leading-tight">Unlock Your<br/>Professional Career</h2>
+              <p className="text-slate-400 text-sm leading-relaxed mb-8">Join thousands of professionals who used our AI-powered templates to land their dream jobs at top-tier companies.</p>
+              
+              <ul className="space-y-4">
+                {[
+                  "Pixel-perfect PDF & DOCX export",
+                  "ATS-optimized professional layouts",
+                  "AI-enhanced content & suggestions",
+                  "Unlimited edits & re-downloads"
+                ].map((item, i) => (
+                  <li key={i} className="flex items-center gap-3 text-sm font-medium">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="mt-12 p-6 bg-white/5 rounded-3xl border border-white/5 backdrop-blur-sm">
+               <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 bg-indigo-500 rounded-full flex items-center justify-center font-bold text-white shadow-lg">
+                    {data.personalInfo.fullName?.charAt(0) || 'R'}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Resume Preview</p>
+                    <p className="text-sm font-black">{data.personalInfo.fullName || 'Professional Resume'}</p>
+                  </div>
+               </div>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <button 
-              onClick={() => {
-                localStorage.setItem("paid", "true");
-                setView('success');
-              }}
-              className="w-full h-16 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-xl shadow-primary/20 active:scale-95"
-            >
-              I have paid
-            </button>
-            <button 
-              onClick={() => setView('success')}
-              className="w-full h-16 bg-white text-slate-600 font-bold border border-slate-200 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 transition-all active:scale-95"
-            >
-              Cancel
-            </button>
+          {/* Right Side: Payment */}
+          <div className="p-12 flex flex-col justify-center">
+            <div className="text-center mb-10">
+              <span className="px-4 py-1.5 bg-indigo-50 text-primary text-[10px] font-black uppercase tracking-[0.2em] rounded-full inline-block mb-4">Premium Access</span>
+              <h1 className="text-4xl font-black text-slate-900 mb-2">₹5.00</h1>
+              <p className="text-slate-400 text-sm font-medium">One-time payment • Lifetime access</p>
+            </div>
+
+            <div className="space-y-4">
+              <button 
+                onClick={handlePayment}
+                disabled={paymentLoading}
+                className="w-full h-16 bg-primary text-white font-bold rounded-2xl flex items-center justify-center gap-3 hover:brightness-110 transition-all shadow-xl shadow-primary/20 active:scale-95 disabled:opacity-50"
+              >
+                {paymentLoading ? (
+                  <><Sparkles className="w-5 h-5 animate-spin" /> Processing...</>
+                ) : (
+                  <>Unlock Premium Resume <ArrowRight className="w-5 h-5" /></>
+                )}
+              </button>
+              
+              <button 
+                onClick={() => setView('success')}
+                className="w-full h-16 bg-white text-slate-600 font-bold border border-slate-200 rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-50 transition-all active:scale-95"
+              >
+                Not now
+              </button>
+            </div>
+
+            <div className="mt-10 border-t border-slate-100 pt-8 text-center">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Secure Checkout Powered by Razorpay</p>
+              <div className="flex justify-center gap-6 opacity-40 grayscale group-hover:grayscale-0 transition-all">
+                 <CreditCard className="w-6 h-6" />
+                 <ShieldCheck className="w-6 h-6" />
+                 <Zap className="w-6 h-6" />
+              </div>
+            </div>
           </div>
         </motion.div>
-        
-        <p className="mt-8 text-[10px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-2">
-           <ShieldCheck className="w-4 h-4 text-emerald-500" />
-           Secure UPI Payment
-        </p>
       </div>
     );
   }
