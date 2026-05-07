@@ -210,32 +210,39 @@ app.get('/auth/linkedin/callback', async (req, res) => {
 
     // ─── Supabase Storage ────────────────────────────────────────────────
     let importId = null;
+    let upsertSuccess = false;
     try {
       const { createClient } = await import('@supabase/supabase-js');
       if (process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
         const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
         
-        importId = crypto.randomUUID();
+        const newId = crypto.randomUUID();
         
         const { error } = await supabase.from('linkedin_imports').upsert({
-          id: importId,
+          id: newId,
           email: enhancedData.email,
           full_name: enhancedData.fullName,
           profile_data: enhancedData,
           updated_at: new Date().toISOString()
         }, { onConflict: 'email' });
         
-        if (error) throw error;
-        console.log('Stored in Supabase with ID:', importId);
+        if (!error) {
+          importId = newId;
+          upsertSuccess = true;
+          console.log('Stored in Supabase with ID:', importId);
+        } else {
+          console.error('Supabase upsert error:', error.message);
+        }
       }
     } catch (dbErr) {
       console.error('Supabase storage failed:', dbErr);
     }
 
-    if (importId) {
+    if (upsertSuccess && importId) {
       res.redirect(`${productionUrl}?linkedin_import_id=${importId}`);
     } else {
-      // Fallback to URL if Supabase fails (might be truncated)
+      // Fallback to URL if Supabase fails (e.g. table doesn't exist)
+      console.log('Falling back to URL-based data transfer...');
       const encoded = encodeURIComponent(JSON.stringify(enhancedData));
       res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
     }
@@ -244,6 +251,7 @@ app.get('/auth/linkedin/callback', async (req, res) => {
     res.redirect(`${productionUrl}?linkedin_error=server_error&msg=${encodeURIComponent(err.message)}`);
   }
 });
+
 
 
 
