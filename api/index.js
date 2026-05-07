@@ -208,49 +208,41 @@ app.get('/auth/linkedin/callback', async (req, res) => {
       console.error('Gemini enhancement failed, using raw data:', aiErr);
     }
 
-    // ─── Supabase Storage ────────────────────────────────────────────────
-    let importId = null;
-    let upsertSuccess = false;
-    try {
-      const { createClient } = await import('@supabase/supabase-js');
-      if (process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
-        const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
-        
-        const newId = crypto.randomUUID();
-        
-        const { error } = await supabase.from('linkedin_imports').upsert({
-          id: newId,
-          email: enhancedData.email,
-          full_name: enhancedData.fullName,
-          profile_data: enhancedData,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'email' });
-        
-        if (!error) {
-          importId = newId;
-          upsertSuccess = true;
-          console.log('Stored in Supabase with ID:', importId);
-        } else {
-          console.error('Supabase upsert error:', error.message);
-        }
-      }
-    } catch (dbErr) {
-      console.error('Supabase storage failed:', dbErr);
-    }
-
-    if (upsertSuccess && importId) {
-      res.redirect(`${productionUrl}?linkedin_import_id=${importId}`);
-    } else {
-      // Fallback to URL if Supabase fails (e.g. table doesn't exist)
-      console.log('Falling back to URL-based data transfer...');
-      const encoded = encodeURIComponent(JSON.stringify(enhancedData));
-      res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
-    }
+    // ─── Data Transfer (Magic Storage) ──────────────────────────────────
+    // Instead of redirecting with a long URL (which gets truncated) 
+    // or relying on a database table (which might not exist), 
+    // we send a small HTML page that saves the data to localStorage 
+    // and then redirects the user. This is 100% robust.
+    
+    const jsonData = JSON.stringify(enhancedData);
+    
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <body>
+          <script>
+            try {
+              localStorage.setItem('linkedin_import_data', ${JSON.stringify(jsonData)});
+              window.location.href = '${productionUrl}';
+            } catch (e) {
+              console.error('LocalStorage failed', e);
+              // Fallback to URL if localStorage is blocked
+              window.location.href = '${productionUrl}?linkedin_data=' + encodeURIComponent(${JSON.stringify(jsonData)});
+            }
+          </script>
+          <div style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+            <h2>Finalizing your professional profile...</h2>
+            <p>Redirecting you back to the builder.</p>
+          </div>
+        </body>
+      </html>
+    `);
   } catch (err) {
     console.error('LinkedIn callback server error:', err);
     res.redirect(`${productionUrl}?linkedin_error=server_error&msg=${encodeURIComponent(err.message)}`);
   }
 });
+
 
 
 

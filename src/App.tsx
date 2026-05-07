@@ -80,6 +80,24 @@ export default function App() {
     const error = params.get('linkedin_error');
 
     const loadLinkedInData = async () => {
+      // 1. Check Magic Storage (LocalStorage) - Most Reliable
+      const magicData = localStorage.getItem('linkedin_import_data');
+      if (magicData) {
+        try {
+          setIsProcessingLinkedIn(true);
+          const profile = JSON.parse(magicData);
+          localStorage.removeItem('linkedin_import_data'); // Clean up
+          setTimeout(() => {
+            handleLinkedInData(profile);
+            setIsProcessingLinkedIn(false);
+          }, 1000);
+          return;
+        } catch (e) {
+          console.error("Magic storage parse failed", e);
+        }
+      }
+
+      // 2. Check Supabase ID (Legacy Fallback)
       if (linkedinImportId) {
         try {
           setIsProcessingLinkedIn(true);
@@ -89,8 +107,7 @@ export default function App() {
             .eq('id', linkedinImportId)
             .single();
 
-          if (dbError) throw dbError;
-          if (importRecord?.profile_data) {
+          if (!dbError && importRecord?.profile_data) {
             handleLinkedInData(importRecord.profile_data);
           }
           setIsProcessingLinkedIn(false);
@@ -99,7 +116,9 @@ export default function App() {
           console.error("Failed to fetch LinkedIn import", e);
           setIsProcessingLinkedIn(false);
         }
-      } else if (linkedinData) {
+      } 
+      // 3. Check URL Data (URL Fallback - often truncated)
+      else if (linkedinData) {
         try {
           setIsProcessingLinkedIn(true);
           const profile = JSON.parse(decodeURIComponent(linkedinData));
@@ -112,7 +131,9 @@ export default function App() {
           console.error("Failed to parse LinkedIn data", e);
           setIsProcessingLinkedIn(false);
         }
-      } else if (error) {
+      } 
+      // 4. Handle Errors
+      else if (error) {
         setLinkedinError(decodeURIComponent(error));
         setView('linkedin-import');
         window.history.replaceState({}, document.title, "/");
@@ -121,6 +142,7 @@ export default function App() {
 
     loadLinkedInData();
   }, []);
+
 
 
   const handleLinkedInData = (profile: LinkedInProfileData) => {
