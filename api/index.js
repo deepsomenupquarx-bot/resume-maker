@@ -78,8 +78,9 @@ app.get('/api/linkedin/auth-url', (req, res) => {
     const redirectUri = getLinkedinRedirectUri(req);
     console.log('Generating LinkedIn Auth URL with Redirect URI:', redirectUri);
     
-    const scope = 'openid profile email';
+    const scope = 'openid profile email r_basicprofile';
     const state = crypto.randomBytes(16).toString('hex');
+
     
     if (!process.env.LINKEDIN_CLIENT_ID) {
       console.error('LINKEDIN_CLIENT_ID is missing');
@@ -171,12 +172,28 @@ app.get('/auth/linkedin/callback', async (req, res) => {
         const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         
-        const prompt = `Convert this LinkedIn profile data into a professional resume format JSON. 
-        Profile: ${JSON.stringify(rawData)}
-        Return a JSON with: summary (ATS-friendly), experiences (array of {title, company, startDate, endDate, description}), education (array of {degree, school, startYear, endYear}), skills (array).
-        If data is missing, use professional placeholders or leave empty. 
-        Description should be in bullet points.
-        Format strictly as JSON.`;
+        const prompt = `Act as an expert career coach and professional resume writer.
+        I will provide you with basic LinkedIn profile data. Your task is to expand this into a COMPLETE, professional, and ATS-optimized resume in JSON format.
+        
+        Profile Data: ${JSON.stringify(rawData)}
+        
+        Requirements:
+        1. SUMMARY: Create a high-impact, 3-4 sentence professional summary that highlights key strengths (infer based on the headline/name if necessary).
+        2. EXPERIENCE: Generate 2-3 professional-sounding experience entries. If the profile doesn't have specific positions, use the name and headline to infer likely roles (e.g., if headline is "Full Stack Developer", create a role for "Senior Software Engineer" at a generic "Tech Solutions" company).
+        3. EDUCATION: Generate at least 1 education entry (e.g., Bachelor's Degree).
+        4. SKILLS: Generate a list of 8-12 relevant technical and soft skills.
+        5. FORMAT: Each experience description MUST be 3-4 ATS-friendly bullet points.
+        
+        Return STRICTLY a JSON object with this structure:
+        {
+          "summary": "...",
+          "experiences": [{ "title": "...", "company": "...", "startDate": "...", "endDate": "...", "location": "...", "description": "• point 1\\n• point 2" }],
+          "education": [{ "degree": "...", "school": "...", "startYear": "...", "endYear": "...", "location": "..." }],
+          "skills": ["skill1", "skill2", ...]
+        }
+        
+        Do not include any text other than the JSON object.`;
+
         
         const result = await model.generateContent(prompt);
         const text = result.response.text();
