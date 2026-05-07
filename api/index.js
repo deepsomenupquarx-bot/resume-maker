@@ -9,27 +9,75 @@ import fetch from 'node-fetch';
 
 dotenv.config();
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || '',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || '',
-});
+// Helper to check environment variables
+const checkEnv = () => {
+  const required = [
+    'LINKEDIN_CLIENT_ID',
+    'LINKEDIN_CLIENT_SECRET',
+    'RAZORPAY_KEY_ID',
+    'RAZORPAY_KEY_SECRET'
+  ];
+  const missing = required.filter(key => !process.env[key]);
+  if (missing.length > 0) {
+    console.error('CRITICAL: Missing environment variables:', missing.join(', '));
+  } else {
+    console.log('Environment variables verified successfully.');
+  }
+  
+  // Log presence (not values) of other keys
+  const others = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'GEMINI_API_KEY', 'PRODUCTION_URL', 'LINKEDIN_REDIRECT_URI'];
+  others.forEach(key => {
+    console.log(`${key}: ${process.env[key] ? 'LOADED' : 'NOT FOUND'}`);
+  });
+};
+
+checkEnv();
 
 const app = express();
 
-app.use(cors());
+// Configure CORS
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json({ limit: '50mb' }));
 
-const PRODUCTION_URL = process.env.PRODUCTION_URL || 'https://resume-maker-mu-coral.vercel.app';
-const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI || `${PRODUCTION_URL}/auth/linkedin/callback`;
+// Dynamic URL resolution
+const getProductionUrl = (req) => {
+  if (process.env.PRODUCTION_URL) return process.env.PRODUCTION_URL;
+  // Fallback for Vercel
+  const host = req.get('host');
+  const protocol = req.get('x-forwarded-proto') || 'https';
+  return `${protocol}://${host}`;
+};
 
-console.log('API Initialized with PRODUCTION_URL:', PRODUCTION_URL);
-console.log('LinkedIn Redirect URI:', LINKEDIN_REDIRECT_URI);
+const getLinkedinRedirectUri = (req) => {
+  if (process.env.LINKEDIN_REDIRECT_URI) return process.env.LINKEDIN_REDIRECT_URI;
+  return `${getProductionUrl(req)}/auth/linkedin/callback`;
+};
+
+// ─── Health Check & Debug ──────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    env: {
+      LINKEDIN_CLIENT_ID: !!process.env.LINKEDIN_CLIENT_ID,
+      RAZORPAY_KEY_ID: !!process.env.RAZORPAY_KEY_ID,
+      PRODUCTION_URL: process.env.PRODUCTION_URL || 'NOT_SET (using dynamic)',
+    }
+  });
+});
 
 // ─── LinkedIn OAuth ────────────────────────────────────────────────────────────
 
 app.get('/api/linkedin/auth-url', (req, res) => {
   try {
-    console.log('Generating LinkedIn Auth URL...');
+    const redirectUri = getLinkedinRedirectUri(req);
+    console.log('Generating LinkedIn Auth URL with Redirect URI:', redirectUri);
+    
     const scope = 'openid profile email';
     const state = crypto.randomBytes(16).toString('hex');
     
@@ -41,11 +89,10 @@ app.get('/api/linkedin/auth-url', (req, res) => {
     const url = `https://www.linkedin.com/oauth/v2/authorization?` +
       `response_type=code` +
       `&client_id=${process.env.LINKEDIN_CLIENT_ID}` +
-      `&redirect_uri=${encodeURIComponent(LINKEDIN_REDIRECT_URI)}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&scope=${encodeURIComponent(scope)}` +
       `&state=${state}`;
     
-    console.log('Auth URL generated successfully');
     res.json({ url, state });
   } catch (error) {
     console.error('Error in /api/linkedin/auth-url:', error);
@@ -55,39 +102,40 @@ app.get('/api/linkedin/auth-url', (req, res) => {
 
 app.get('/auth/linkedin/callback', async (req, res) => {
   const { code, error, error_description } = req.query;
+  const productionUrl = getProductionUrl(req);
+  const redirectUri = getLinkedinRedirectUri(req);
 
-  console.log('Received LinkedIn callback with code:', code ? 'present' : 'absent');
+  console.log('Received LinkedIn callback. Code present:', !!code);
 
   if (error) {
     console.error('LinkedIn Auth Error:', error, error_description);
     const msg = encodeURIComponent(error_description || error);
-    return res.redirect(`${PRODUCTION_URL}?linkedin_error=${msg}`);
+    return res.redirect(`${productionUrl}?linkedin_error=${msg}`);
   }
 
   if (!code) {
-    return res.redirect(`${PRODUCTION_URL}?linkedin_error=no_code_provided`);
+    return res.redirect(`${productionUrl}?linkedin_error=no_code_provided`);
   }
 
   try {
-    console.log('Exchanging code for access token...');
+    console.log('Exchanging code for access token using redirect_uri:', redirectUri);
     const tokenRes = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         code: code,
-        redirect_uri: LINKEDIN_REDIRECT_URI,
+        redirect_uri: redirectUri,
         client_id: process.env.LINKEDIN_CLIENT_ID,
         client_secret: process.env.LINKEDIN_CLIENT_SECRET,
       }),
     });
     
     const tokenData = await tokenRes.json();
-    console.log('Token response received:', tokenData.access_token ? 'success' : 'failed');
-
+    
     if (!tokenData.access_token) {
       console.error('Failed to get access token:', tokenData);
-      return res.redirect(`${PRODUCTION_URL}?linkedin_error=token_failed`);
+      return res.redirect(`${productionUrl}?linkedin_error=token_failed&details=${encodeURIComponent(JSON.stringify(tokenData))}`);
     }
 
     console.log('Fetching user profile...');
@@ -95,7 +143,7 @@ app.get('/auth/linkedin/callback', async (req, res) => {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     const profile = await profileRes.json();
-    console.log('Profile fetched for:', profile.name);
+    console.log('Profile fetched successfully');
 
     const resumeData = {
       fullName: `${profile.given_name || ''} ${profile.family_name || ''}`.trim(),
@@ -106,10 +154,10 @@ app.get('/auth/linkedin/callback', async (req, res) => {
     };
 
     const encoded = encodeURIComponent(JSON.stringify(resumeData));
-    res.redirect(`${PRODUCTION_URL}?linkedin_data=${encoded}`);
+    res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
   } catch (err) {
     console.error('LinkedIn callback server error:', err);
-    res.redirect(`${PRODUCTION_URL}?linkedin_error=server_error`);
+    res.redirect(`${productionUrl}?linkedin_error=server_error&msg=${encodeURIComponent(err.message)}`);
   }
 });
 
@@ -117,6 +165,11 @@ app.get('/auth/linkedin/callback', async (req, res) => {
 
 app.post('/api/create-order', async (req, res) => {
   try {
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID || '',
+      key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+    });
+
     const options = {
       amount: 500,
       currency: "INR",
@@ -126,7 +179,7 @@ app.post('/api/create-order', async (req, res) => {
     res.json(order);
   } catch (error) {
     console.error('Razorpay Order Error:', error);
-    res.status(500).json({ error: 'Failed to create order' });
+    res.status(500).json({ error: 'Failed to create order', message: error.message });
   }
 });
 
@@ -146,27 +199,38 @@ app.post('/api/verify-payment', async (req, res) => {
     }
   } catch (error) {
     console.error('Payment Verification Error:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: 'Internal Server Error', message: error.message });
   }
 });
 
 // ─── PDF Generation (Serverless Puppeteer) ─────────────────────────────
 
 app.post('/api/generate-pdf', async (req, res) => {
+  let browser = null;
   try {
     const { html } = req.body;
     if (!html) return res.status(400).json({ error: 'HTML content is required' });
 
-    const browser = await puppeteer.launch({
+    console.log('Launching browser for PDF generation...');
+    
+    // Configure chromium for serverless
+    const executablePath = await chromium.executablePath();
+    
+    browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
+      executablePath: executablePath,
       headless: chromium.headless,
       ignoreHTTPSErrors: true,
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    
+    // Set a timeout for loading content
+    await page.setContent(html, { 
+      waitUntil: 'networkidle0',
+      timeout: 30000 
+    });
 
     const pdfBuffer = await page.pdf({
       format: 'A4',
@@ -177,13 +241,19 @@ app.post('/api/generate-pdf', async (req, res) => {
     });
 
     await browser.close();
+    browser = null;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'attachment; filename="resume.pdf"');
     res.send(Buffer.from(pdfBuffer));
   } catch (error) {
     console.error('PDF Generation Error:', error);
-    res.status(500).json({ error: 'Failed to generate PDF' });
+    if (browser) await browser.close();
+    res.status(500).json({ 
+      error: 'Failed to generate PDF', 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
