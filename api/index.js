@@ -118,7 +118,7 @@ app.get('/auth/linkedin/callback', async (req, res) => {
   }
 
   try {
-    console.log('Exchanging code for access token using redirect_uri:', redirectUri);
+    console.log('Exchanging code for access token...');
     const tokenRes = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -135,31 +135,86 @@ app.get('/auth/linkedin/callback', async (req, res) => {
     
     if (!tokenData.access_token) {
       console.error('Failed to get access token:', tokenData);
-      return res.redirect(`${productionUrl}?linkedin_error=token_failed&details=${encodeURIComponent(JSON.stringify(tokenData))}`);
+      return res.redirect(`${productionUrl}?linkedin_error=token_failed`);
     }
 
-    console.log('Fetching user profile...');
+    console.log('Fetching user profile (OpenID)...');
     const profileRes = await fetch('https://api.linkedin.com/v2/userinfo', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     const profile = await profileRes.json();
     console.log('Profile fetched successfully');
 
-    const resumeData = {
+    // Prepare extended data structure
+    // Since full profile data (experience/education) is restricted in standard API,
+    // we use the available profile data and potentially use AI to structure it.
+    
+    const rawData = {
       fullName: `${profile.given_name || ''} ${profile.family_name || ''}`.trim(),
       email: profile.email || '',
-      headline: profile.name || '',
+      headline: profile.name || '', // LinkedIn often returns the headline in the name field for OpenID
       photo: profile.picture || '',
       location: profile.locale?.country || '',
+      linkedinUrl: `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(profile.name)}`, // Fallback search URL
     };
 
-    const encoded = encodeURIComponent(JSON.stringify(resumeData));
+    // ─── AI Enhancement ──────────────────────────────────────────────────
+    // We'll use Gemini to "predict" or "structure" a professional summary 
+    // and potentially dummy experience/education if we can't get it, 
+    // but the goal is to map what we HAVE.
+    
+    let enhancedData = { ...rawData };
+    
+    try {
+      const { GoogleGenAI } = await import("@google/genai");
+      if (process.env.GEMINI_API_KEY) {
+        const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        
+        const prompt = `Convert this LinkedIn profile data into a professional resume format JSON. 
+        Profile: ${JSON.stringify(rawData)}
+        Return a JSON with: summary (ATS-friendly), experiences (array of {title, company, startDate, endDate, description}), education (array of {degree, school, startYear, endYear}), skills (array).
+        If data is missing, use professional placeholders or leave empty. 
+        Description should be in bullet points.
+        Format strictly as JSON.`;
+        
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const aiData = JSON.parse(jsonMatch[0]);
+          enhancedData = { ...rawData, ...aiData };
+        }
+      }
+    } catch (aiErr) {
+      console.error('Gemini enhancement failed, using raw data:', aiErr);
+    }
+
+    // ─── Supabase Storage ────────────────────────────────────────────────
+    try {
+      const { createClient } = await import('@supabase/supabase-js');
+      if (process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
+        const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
+        await supabase.from('linkedin_imports').upsert({
+          email: enhancedData.email,
+          full_name: enhancedData.fullName,
+          profile_data: enhancedData,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'email' });
+        console.log('Stored in Supabase');
+      }
+    } catch (dbErr) {
+      console.error('Supabase storage failed:', dbErr);
+    }
+
+    const encoded = encodeURIComponent(JSON.stringify(enhancedData));
     res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
   } catch (err) {
     console.error('LinkedIn callback server error:', err);
     res.redirect(`${productionUrl}?linkedin_error=server_error&msg=${encodeURIComponent(err.message)}`);
   }
 });
+
 
 // ─── Razorpay ────────────────────────────────────────────────────────────
 

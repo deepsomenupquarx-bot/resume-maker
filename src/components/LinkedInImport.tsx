@@ -17,15 +17,21 @@ export interface LinkedInProfileData {
   headline: string;
   photo: string;
   location: string;
+  linkedinUrl: string;
+  summary: string;
+  experiences: any[];
+  education: any[];
+  skills: string[];
 }
 
-type Status = 'idle' | 'connecting' | 'error';
+type Status = 'idle' | 'connecting' | 'processing' | 'error';
 
 const STEPS = [
-  'Authenticating with LinkedIn...',
-  'Fetching your profile data...',
-  'Mapping to resume format...',
-  'AI-optimizing content...',
+  'Connecting to LinkedIn API...',
+  'Fetching profile metadata...',
+  'AI-optimizing resume summary...',
+  'Generating ATS-friendly experience...',
+  'Finalizing profile data...',
 ];
 
 export default function LinkedInImport({ onBack, onDataFetched, errorMessage }: LinkedInImportProps) {
@@ -39,18 +45,19 @@ export default function LinkedInImport({ onBack, onDataFetched, errorMessage }: 
     setError('');
 
     try {
-      // Step through loading animation while waiting for OAuth redirect
-      const stepInterval = setInterval(() => {
-        setLoadingStep(prev => {
-          if (prev < STEPS.length - 1) return prev + 1;
-          clearInterval(stepInterval);
-          return prev;
-        });
-      }, 800);
-
       const res = await fetch('/api/linkedin/auth-url');
       if (!res.ok) throw new Error('Could not connect to server');
       const { url } = await res.json();
+      
+      // Start step simulation while waiting for redirect (this is mostly for UI feel)
+      const stepInterval = setInterval(() => {
+        setLoadingStep(prev => {
+          if (prev < 1) return prev + 1; // Only advance first few steps before redirect
+          clearInterval(stepInterval);
+          return prev;
+        });
+      }, 500);
+
       // Redirect to LinkedIn — callback will return us to the app
       window.location.href = url;
     } catch (err: any) {
@@ -58,6 +65,7 @@ export default function LinkedInImport({ onBack, onDataFetched, errorMessage }: 
       setError('Could not reach the server. Make sure the backend is running.');
     }
   };
+
 
   const benefits = [
     'Auto-fill name, email & headline',

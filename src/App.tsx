@@ -13,24 +13,7 @@ import * as Templates from './components/templates/AllTemplates';
 import { QRCodeSVG } from 'qrcode.react';
 import LinkedInImport, { LinkedInProfileData } from './components/LinkedInImport';
 
-const DUMMY_DATA: ResumeData = {
-  personalInfo: {
-    fullName: 'Christopher Carter',
-    email: 'chris@example.com',
-    phone: '+1 (555) 123-4567',
-    location: 'Seattle, WA',
-    summary: 'A highly skilled and organized professional with additional experience within strategy and operations. Possessing a realistic approach and analytical mind to facilitate increased effectiveness.'
-  },
-  experiences: [
-    { id: '1', title: 'Customer Service Representative', company: 'AT&T Inc.', startDate: 'Aug 2019', endDate: 'Present', current: true, description: '• Maintained up-to-date knowledge of products.\n• Handled large volume of calls on a day-to-day basis.', location: 'Seattle' },
-    { id: '2', title: 'Sales Representative', company: 'Retail Hub', startDate: 'Jun 2016', endDate: 'Jul 2019', current: false, description: '• Greeted customers in a friendly manner.\n• Provided high-quality customer service.', location: 'Bellevue' }
-  ],
-  education: [
-    { id: '1', degree: 'Bachelor of Communications', school: 'University of Seattle', startYear: '2012', endYear: '2016', location: 'Seattle' }
-  ],
-  skills: ['Communication', 'Troubleshooting', 'Multitasking', 'Mediation', 'Strategy'],
-  projects: []
-};
+// No mock data needed for production
 
 import { 
   Sparkles, 
@@ -87,6 +70,8 @@ export default function App() {
   const [isPaid, setIsPaid] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [linkedinError, setLinkedinError] = useState<string | undefined>(undefined);
+  const [isProcessingLinkedIn, setIsProcessingLinkedIn] = useState(false);
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -95,12 +80,18 @@ export default function App() {
 
     if (linkedinData) {
       try {
+        setIsProcessingLinkedIn(true);
         const profile = JSON.parse(decodeURIComponent(linkedinData));
-        handleLinkedInData(profile);
-        // Clear params without refresh
-        window.history.replaceState({}, document.title, "/");
+        // Small delay to show the nice animation
+        setTimeout(() => {
+          handleLinkedInData(profile);
+          setIsProcessingLinkedIn(false);
+          // Clear params without refresh
+          window.history.replaceState({}, document.title, "/");
+        }, 1500);
       } catch (e) {
         console.error("Failed to parse LinkedIn data", e);
+        setIsProcessingLinkedIn(false);
       }
     } else if (error) {
       setLinkedinError(decodeURIComponent(error));
@@ -116,9 +107,29 @@ export default function App() {
         ...prev.personalInfo,
         fullName: profile.fullName || prev.personalInfo.fullName,
         email: profile.email || prev.personalInfo.email,
-        summary: profile.headline || prev.personalInfo.summary,
+        summary: profile.summary || profile.headline || prev.personalInfo.summary,
         location: profile.location || prev.personalInfo.location,
-      }
+        linkedin: profile.linkedinUrl || prev.personalInfo.linkedin,
+      },
+      experiences: (profile.experiences || []).map((exp: any) => ({
+        id: Math.random().toString(36).substr(2, 9),
+        title: exp.title || '',
+        company: exp.company || '',
+        location: exp.location || '',
+        startDate: exp.startDate || '',
+        endDate: exp.endDate || '',
+        current: !exp.endDate || exp.endDate.toLowerCase() === 'present',
+        description: exp.description || '',
+      })),
+      education: (profile.education || []).map((edu: any) => ({
+        id: Math.random().toString(36).substr(2, 9),
+        degree: edu.degree || '',
+        school: edu.school || '',
+        location: edu.location || '',
+        startYear: edu.startYear || '',
+        endYear: edu.endYear || '',
+      })),
+      skills: profile.skills || prev.skills,
     }));
     setView('builder');
     setCurrentStep('info');
@@ -532,6 +543,43 @@ export default function App() {
     setIsEnhancing(false);
   };
 
+  if (isProcessingLinkedIn) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center"
+        >
+          <div className="relative w-24 h-24 mb-8">
+            <div className="absolute inset-0 rounded-full border-4 border-primary/20" />
+            <motion.div
+              className="absolute inset-0 rounded-full border-4 border-t-primary border-r-transparent border-b-transparent border-l-transparent"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Zap className="w-10 h-10 text-primary" fill="currentColor" />
+            </div>
+          </div>
+          <h2 className="text-3xl font-black text-white mb-4">Syncing LinkedIn Profile</h2>
+          <p className="text-slate-400 max-w-sm">Our AI is structuring your professional history and optimizing it for ATS compatibility...</p>
+          
+          <div className="mt-12 flex gap-2">
+             {[0, 1, 2].map(i => (
+               <motion.div 
+                 key={i}
+                 className="w-2 h-2 bg-primary rounded-full"
+                 animate={{ opacity: [0.3, 1, 0.3] }}
+                 transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+               />
+             ))}
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
   if (view === 'templates') {
     const categories = ['Core', 'Advanced', 'Premium'] as const;
 
@@ -585,7 +633,8 @@ export default function App() {
                         <div className="w-full aspect-[1/1.414] bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden relative transition-all duration-300 group-hover:shadow-2xl group-hover:border-primary/50">
                           {/* Mini Preview rendering real component scaled down */}
                           <div className="absolute top-0 left-0 origin-top-left pointer-events-none" style={{ transform: 'scale(0.3)', width: '333.33%', height: '333.33%' }}>
-                            <TemplateComp data={DUMMY_DATA} />
+                            {/* Render empty state instead of DUMMY_DATA for privacy/cleanliness */}
+                            <TemplateComp data={INITIAL_DATA} />
                           </div>
                           
                           {/* Hover Overlay - Like Resume.io */}
