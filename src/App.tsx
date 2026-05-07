@@ -76,29 +76,52 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const linkedinData = params.get('linkedin_data');
+    const linkedinImportId = params.get('linkedin_import_id');
     const error = params.get('linkedin_error');
 
-    if (linkedinData) {
-      try {
-        setIsProcessingLinkedIn(true);
-        const profile = JSON.parse(decodeURIComponent(linkedinData));
-        // Small delay to show the nice animation
-        setTimeout(() => {
-          handleLinkedInData(profile);
+    const loadLinkedInData = async () => {
+      if (linkedinImportId) {
+        try {
+          setIsProcessingLinkedIn(true);
+          const { data: importRecord, error: dbError } = await supabase
+            .from('linkedin_imports')
+            .select('profile_data')
+            .eq('id', linkedinImportId)
+            .single();
+
+          if (dbError) throw dbError;
+          if (importRecord?.profile_data) {
+            handleLinkedInData(importRecord.profile_data);
+          }
           setIsProcessingLinkedIn(false);
-          // Clear params without refresh
           window.history.replaceState({}, document.title, "/");
-        }, 1500);
-      } catch (e) {
-        console.error("Failed to parse LinkedIn data", e);
-        setIsProcessingLinkedIn(false);
+        } catch (e) {
+          console.error("Failed to fetch LinkedIn import", e);
+          setIsProcessingLinkedIn(false);
+        }
+      } else if (linkedinData) {
+        try {
+          setIsProcessingLinkedIn(true);
+          const profile = JSON.parse(decodeURIComponent(linkedinData));
+          setTimeout(() => {
+            handleLinkedInData(profile);
+            setIsProcessingLinkedIn(false);
+            window.history.replaceState({}, document.title, "/");
+          }, 1000);
+        } catch (e) {
+          console.error("Failed to parse LinkedIn data", e);
+          setIsProcessingLinkedIn(false);
+        }
+      } else if (error) {
+        setLinkedinError(decodeURIComponent(error));
+        setView('linkedin-import');
+        window.history.replaceState({}, document.title, "/");
       }
-    } else if (error) {
-      setLinkedinError(decodeURIComponent(error));
-      setView('linkedin-import');
-      window.history.replaceState({}, document.title, "/");
-    }
+    };
+
+    loadLinkedInData();
   }, []);
+
 
   const handleLinkedInData = (profile: LinkedInProfileData) => {
     setData(prev => ({

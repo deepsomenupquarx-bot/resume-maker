@@ -209,29 +209,42 @@ app.get('/auth/linkedin/callback', async (req, res) => {
     }
 
     // ─── Supabase Storage ────────────────────────────────────────────────
+    let importId = null;
     try {
       const { createClient } = await import('@supabase/supabase-js');
       if (process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_ANON_KEY) {
         const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.VITE_SUPABASE_ANON_KEY);
-        await supabase.from('linkedin_imports').upsert({
+        
+        importId = crypto.randomUUID();
+        
+        const { error } = await supabase.from('linkedin_imports').upsert({
+          id: importId,
           email: enhancedData.email,
           full_name: enhancedData.fullName,
           profile_data: enhancedData,
           updated_at: new Date().toISOString()
         }, { onConflict: 'email' });
-        console.log('Stored in Supabase');
+        
+        if (error) throw error;
+        console.log('Stored in Supabase with ID:', importId);
       }
     } catch (dbErr) {
       console.error('Supabase storage failed:', dbErr);
     }
 
-    const encoded = encodeURIComponent(JSON.stringify(enhancedData));
-    res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
+    if (importId) {
+      res.redirect(`${productionUrl}?linkedin_import_id=${importId}`);
+    } else {
+      // Fallback to URL if Supabase fails (might be truncated)
+      const encoded = encodeURIComponent(JSON.stringify(enhancedData));
+      res.redirect(`${productionUrl}?linkedin_data=${encoded}`);
+    }
   } catch (err) {
     console.error('LinkedIn callback server error:', err);
     res.redirect(`${productionUrl}?linkedin_error=server_error&msg=${encodeURIComponent(err.message)}`);
   }
 });
+
 
 
 // ─── Razorpay ────────────────────────────────────────────────────────────
