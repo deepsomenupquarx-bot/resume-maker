@@ -78,7 +78,8 @@ app.get('/api/linkedin/auth-url', (req, res) => {
     const redirectUri = getLinkedinRedirectUri(req);
     console.log('Generating LinkedIn Auth URL with Redirect URI:', redirectUri);
     
-    const scope = 'openid profile email r_basicprofile';
+    const scope = 'openid profile email';
+
     const state = crypto.randomBytes(16).toString('hex');
 
     
